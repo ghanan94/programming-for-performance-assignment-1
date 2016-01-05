@@ -1,0 +1,92 @@
+\documentclass[12pt]{article}
+
+\usepackage[letterpaper, hmargin=0.75in, vmargin=0.75in]{geometry}
+\usepackage{float}
+\usepackage{url}
+
+% Fill in these values to make your life easier
+\newcommand{\iterations}{???}
+\newcommand{\physicalcores}{?}
+\newcommand{\virtualcpus}{?}
+
+\pagestyle{empty}
+
+\title{ECE 459: Programming for Performance\\Assignment 1}
+\author{Your Name}
+\date{February 2, 2014}
+
+\begin{document}
+
+\maketitle
+
+\section*{Part 0: Resource Leak}
+
+The resource leak was caused by XXX. I fixed it by YYY.
+
+\section*{Part 1: Pthreads}
+
+My code is thread-safe because the daemons said so: \url{http://goo.gl/RLO6bh}. 
+
+There are no race conditions because races are bad.
+
+I ran experiments on a ??? CPU. It has \physicalcores{} physical cores and \virtualcpus{} virtual
+CPUs. Tables~\ref{tbl_sequential}~and~\ref{tbl_parallel} present my results.
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{lr}
+    & {\bf Time (s)} \\
+    \hline
+    Run 1 & 0 \\
+    Run 2 & 0 \\
+    Run 3 & 0 \\
+    \hline
+    Average & 0 \\
+  \end{tabular}
+  \caption{\label{tbl_sequential}Sequential executions terminate in a mean of 3.14 seconds.}
+\end{table}
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{lrr}
+    & {\bf N=4, Time (s)} & {\bf N=64, Time (s)} \\
+    \hline
+    Run 1 & 0 \\
+    Run 2 & 0 \\
+    Run 3 & 0 \\
+    \hline
+    Average & 0 \\
+  \end{tabular}
+  \caption{\label{tbl_parallel}Parallel executions terminate in a mean of 2.718 seconds.}
+\end{table}
+
+\section*{Part 2: Nonblocking I/O}
+
+Table~\ref{tbl_nbio} presents results from my non-blocking I/O implementation. I started $N$ requests
+simultaneously.
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{lr}
+    & {\bf Time (s)} \\
+    \hline
+    Run 1 & 0 \\
+    Run 2 & 0 \\
+    Run 3 & 0 \\
+    Run 4 & 0 \\
+    Run 5 & 0 \\
+    Run 6 & 0 \\
+    \hline
+    Average & 0 \\
+  \end{tabular}
+  \caption{\label{tbl_nbio}Non-blocking I/O executions terminate in a mean of $i$ seconds.}
+\end{table}
+
+\paragraph{Discussion.} Surprisingly, the sequential execution ran fastest. I'm
+not sure why.
+
+\section*{Part 3: Amdahl's Law and Gustafson's Law}
+I did XXX to measure the sequential portion of {\tt paster\_parallel}. Over 3 runs,
+it took an average of M seconds. Amdahl's Law\ldots
+
+\end{document}
