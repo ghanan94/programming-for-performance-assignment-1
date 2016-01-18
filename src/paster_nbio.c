@@ -246,7 +246,7 @@ int main(int argc, char **argv)
       break;
     case 'i':
       img = strtoul(optarg, NULL, 10);
-      if (num_threads == 0) {
+      if (img == 0) {
 	printf("%s: option requires an argument > 0 -- 'i'\n", argv[0]);
 	return -1;
       }
