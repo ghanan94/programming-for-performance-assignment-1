@@ -1,0 +1,12 @@
+*.pdf
+*.o
+bin
+*.aux
+*.log
+
+
+# Mac files
+.DS_Store
+
+# Always keep .keep files
+!.keep
