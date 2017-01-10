@@ -3,7 +3,7 @@
 bin
 *.aux
 *.log
-
+*.png
 
 # Mac files
 .DS_Store
