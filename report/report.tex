@@ -21,7 +21,7 @@
 
 \section*{Part 0: Resource Leak}
 
-The resource leak was caused by XXX. I fixed it by YYY.
+The resource leak was caused by the fact that the png_struct struct that is be pointed to by the pointer png_ptr, and the png_info struct being pointed to by info_ptr was not freed or destroyed with an appropriate function. I fixed this by calling the {\tt png_destroy_write_struct} function which destroys both the png_struct and png_info structs when I pass in the pointer to the pointer to these structs as arguments.
 
 \section*{Part 1: Pthreads}
 
