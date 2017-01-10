@@ -203,6 +203,7 @@ void write_png_file(char* file_name, png_bytep * output_row_pointers)
   png_write_end(png_ptr, NULL);
     
   fclose(fp);
+  png_destroy_write_struct(&png_ptr, &info_ptr);
 }
 
 struct headerdata {
