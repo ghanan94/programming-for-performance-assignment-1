@@ -21,11 +21,11 @@
 
 \section*{Part 0: Resource Leak}
 
-The resource leak was caused by the fact that the {\tt png_struct} struct that is be pointed to by the pointer {\tt png_ptr}, and the p\tt png_info} struct being pointed to by {\tt info_ptr} was not freed or destroyed with an appropriate function. I fixed this by calling the {\tt png_destroy_write_struct} function which destroys both the {\tt png_struct} and {\tt png_info} structs when I pass in the pointer to the pointer to these structs as arguments. The problem was within the {\tt write_png_file} function.
+The resource leak was caused by the fact that the {\tt png\_struct} struct that is be pointed to by the pointer {\tt png\_ptr}, and the {\tt png\_info} struct being pointed to by {\tt info\_ptr} was not freed or destroyed with an appropriate function. I fixed this by calling the {\tt png\_destroy\_write\_struct} function which destroys both the {\tt png\_struct} and {\tt png\_info} structs when I pass in the pointer to the pointer to these structs as arguments. The problem was within the {\tt write\_png\_file} function.
 
 \section*{Part 1: Pthreads}
 
-My code is thread-safe because the daemons said so: \url{http://goo.gl/RLO6bh}. 
+My code is thread-safe because the daemons said so: \url{http://goo.gl/RLO6bh}.
 
 There are no race conditions because races are bad.
 
