@@ -8,7 +8,7 @@
  * Copyright (C) 1998 - 2013, Daniel Stenberg, <daniel@haxx.se>, et al.
  * libpng examples are from http://zarb.org/~gc/html/libpng.html
  * Copyright 2002-2011 Guillaume Cottenceau and contributors.
- * 
+ *
  * Modifications to integrate the code are
  * Copyright 2013 Patrick Lam.
  *
@@ -28,6 +28,8 @@
 #include <png.h>
 #include <curl/curl.h>
 
+#include <pthread.h>
+
 struct bufdata {
   png_bytep buf;
   int len, pos;
@@ -38,7 +40,10 @@ struct bufdata {
 #define WIDTH 4000
 #define HEIGHT 3000
 
-#define BASE_URL "http://berkeley.uwaterloo.ca:4590/image?img=%d"
+#define BASE_URL_1 "http://berkeley.uwaterloo.ca:4590/image?img=%d"
+#define BASE_URL_2 "http://patricklam.ca:4590/image?img=%d"
+#define BASE_URL_3 "http://ece459-1.uwaterloo.ca:4590/image?img=%d"
+
 #define BUF_WIDTH WIDTH/N
 #define BUF_HEIGHT HEIGHT
 #define BUF_SIZE 10485760
@@ -60,7 +65,7 @@ void abort_(const char * s, ...)
 
 void read_cb (png_structp png_ptr, png_bytep outBytes, png_size_t byteCountToRead);
 
-/* Given PNG-formatted data at bd, read the data into a buffer that we allocate 
+/* Given PNG-formatted data at bd, read the data into a buffer that we allocate
  * and return (row_pointers, here).
  *
  * Note: caller must free the returned value. */
@@ -75,11 +80,11 @@ png_bytep* read_png_file(png_structp png_ptr, png_infop * info_ptr, struct bufda
 
   if (png_sig_cmp(bd->buf, 0, 8))
     abort_("[read_png_file] Input is not recognized as a PNG file");
-    
+
   *info_ptr = png_create_info_struct(png_ptr);
   if (!*info_ptr)
     abort_("[read_png_file] png_create_info_struct failed");
-  
+
   if (setjmp(png_jmpbuf(png_ptr)))
     abort_("[read_png_file] Error during init_io");
 
@@ -90,14 +95,14 @@ png_bytep* read_png_file(png_structp png_ptr, png_infop * info_ptr, struct bufda
   bit_depth = png_get_bit_depth(png_ptr, *info_ptr);
   if (bit_depth != 8)
     abort_("[read_png_file] bit depth 16 PNG files unsupported");
-  
+
   if (setjmp(png_jmpbuf(png_ptr)))
     abort_("[read_png_file] Error during read_image");
 
   row_pointers = (png_bytep*) malloc(sizeof(png_bytep) * BUF_HEIGHT);
   for (y=0; y<height; y++)
     row_pointers[y] = (png_byte*) malloc(png_get_rowbytes(png_ptr, *info_ptr));
-  
+
   png_read_image(png_ptr, row_pointers);
 
   return row_pointers;
@@ -118,11 +123,11 @@ void read_cb (png_structp png_ptr, png_bytep outBytes, png_size_t byteCountToRea
 }
 
 /* copy from row_pointers data array to dest data array, at offset (x0, y0) */
-void paint_destination(png_structp png_ptr, png_bytep * row_pointers, 
+void paint_destination(png_structp png_ptr, png_bytep * row_pointers,
 		       int x0, int y0, png_byte* dest)
 {
   int x, y, i;
-  
+
   for (y=0; y<BUF_HEIGHT && (y0+y) < HEIGHT; y++) {
     png_byte* row = row_pointers[y];
     for (x=0; x<BUF_WIDTH; x++) {
@@ -164,44 +169,44 @@ void write_png_file(char* file_name, png_bytep * output_row_pointers)
   FILE *fp = fopen(file_name, "wb");
   if (!fp)
     abort_("[write_png_file] File %s could not be opened for writing", file_name);
-  
-  
+
+
   /* initialize stuff */
   png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-  
+
   if (!png_ptr)
     abort_("[write_png_file] png_create_write_struct failed");
-  
+
   info_ptr = png_create_info_struct(png_ptr);
   if (!info_ptr)
     abort_("[write_png_file] png_create_info_struct failed");
-  
+
   if (setjmp(png_jmpbuf(png_ptr)))
     abort_("[write_png_file] Error during init_io");
-  
+
   png_init_io(png_ptr, fp);
-  
+
   /* write header */
   if (setjmp(png_jmpbuf(png_ptr)))
     abort_("[write_png_file] Error during writing header");
-  
+
   png_set_IHDR(png_ptr, info_ptr, WIDTH, HEIGHT,
 	       8, 6, PNG_INTERLACE_NONE,
 	       PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
-  
+
   png_write_info(png_ptr, info_ptr);
-  
+
   /* write bytes */
   if (setjmp(png_jmpbuf(png_ptr)))
     abort_("[write_png_file] Error during writing bytes");
-  
-  png_write_image(png_ptr, output_row_pointers);  
-  
+
+  png_write_image(png_ptr, output_row_pointers);
+
   if (setjmp(png_jmpbuf(png_ptr)))
     abort_("[write_png_file] Error during end of write");
-  
+
   png_write_end(png_ptr, NULL);
-    
+
   fclose(fp);
   png_destroy_write_struct(&png_ptr, &info_ptr);
 }
@@ -228,6 +233,46 @@ size_t header_cb (char * buf, size_t size, size_t nmemb, void * userdata)
 
 /***********************************************************************************/
 
+pthread_mutex_t get_url_lock;
+
+//
+// Get url to get image from
+//
+void get_url (char ** url, int img)
+{
+  static unsigned int counter;
+
+  pthread_mutex_lock(&get_url_lock);
+
+  switch (counter)
+  {
+  case 0:
+    sprintf(*url, BASE_URL_1, img);
+    break;
+  case 1:
+    sprintf(*url, BASE_URL_2, img);
+    break;
+  case 2:
+  default:
+    sprintf(*url, BASE_URL_3, img);
+    break;
+  }
+
+  counter = (counter + 1) % 3;
+
+  pthread_mutex_unlock(&get_url_lock);
+}
+
+//
+// Funciton that each thread will run
+//
+void thread_function (void * context)
+{
+
+}
+
+/***********************************************************************************/
+
 int main(int argc, char **argv)
 {
   int c;
@@ -235,6 +280,7 @@ int main(int argc, char **argv)
   int img = 1;
   bool received_all_fragments = false;
   bool * received_fragments = calloc(N, sizeof(bool));
+  pthread_t * threads;
 
   while ((c = getopt (argc, argv, "t:")) != -1) {
     switch (c) {
@@ -261,18 +307,24 @@ int main(int argc, char **argv)
   CURLcode res;
   png_structp png_ptr;
   png_infop info_ptr;
-  
+
+  if (pthread_mutex_init(&get_url_lock, NULL) != 0)
+  {
+    abort_("[main] pthread mutex init failed");
+  }
+
+  threads = (pthread_t *) calloc(num_threads, sizeof(pthread_t));
   png_byte * output_buffer = calloc(WIDTH*HEIGHT*4, sizeof(png_byte));
 
   curl = curl_easy_init();
   if (!curl)
     abort_("[main] could not initialize curl");
 
-  char * url = malloc(sizeof(char)*strlen(BASE_URL)+4*5);
+  char * url = malloc(sizeof(char)*strlen(BASE_URL_1)+4*5);
   png_bytep input_buffer = malloc(sizeof(png_byte)*BUF_SIZE);
 
-  struct bufdata bd; 
-  bd.buf = input_buffer; 
+  struct bufdata bd;
+  bd.buf = input_buffer;
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &bd);
 
@@ -281,7 +333,7 @@ int main(int argc, char **argv)
   curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
 
   // request appropriate URL
-  sprintf(url, BASE_URL, img);
+  get_url(&url, img);
   printf("requesting URL %s\n", url);
   curl_easy_setopt(curl, CURLOPT_URL, url);
 
@@ -297,7 +349,7 @@ int main(int argc, char **argv)
     res = curl_easy_perform(curl);
     if(res != CURLE_OK)
       abort_("[main] curl_easy_perform() failed: %s\n",
-              curl_easy_strerror(res));
+	      curl_easy_strerror(res));
 
     // read PNG (as downloaded from network) and copy it to output buffer
     png_bytep* row_pointers = read_png_file(png_ptr, &info_ptr, &bd);
@@ -313,7 +365,7 @@ int main(int argc, char **argv)
     received_all_fragments = true;
     for (int i = 0; i < N; i++)
       if (!received_fragments[i])
-        received_all_fragments = false;
+	received_all_fragments = false;
   } while (!received_all_fragments);
   free(url);
   free(input_buffer);
@@ -330,6 +382,6 @@ int main(int argc, char **argv)
   free(output_row_pointers);
   free(output_buffer);
   free(received_fragments);
-  
+
   return 0;
 }
