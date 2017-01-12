@@ -49,6 +49,12 @@ struct bufdata {
 #define BUF_SIZE 10485760
 #define ECE459_HEADER "X-Ece459-Fragment: "
 
+#ifdef DEBUG
+#define DEBUG_PRINT(x) (printf x)
+#else
+#define DEBUG_PRINT(x) /* DEBUG is not defined/enabled */
+#endif
+
 /* error handling macro */
 void abort_(const char * s, ...)
 {
@@ -123,11 +129,21 @@ void read_cb (png_structp png_ptr, png_bytep outBytes, png_size_t byteCountToRea
 }
 
 /* copy from row_pointers data array to dest data array, at offset (x0, y0) */
+
+//
+// dest is a shared memory space between threads. This function can be called my
+// multiple threads at the same time so we need to make sure that when
+// writing to threads we dont have different threads writing different fragments
+// at the same time
+//
+static pthread_mutex_t paint_destination_lock;
+
 void paint_destination(png_structp png_ptr, png_bytep * row_pointers,
 		       int x0, int y0, png_byte* dest)
 {
   int x, y, i;
 
+  pthread_mutex_lock(&paint_destination_lock);
   for (y=0; y<BUF_HEIGHT && (y0+y) < HEIGHT; y++) {
     png_byte* row = row_pointers[y];
     for (x=0; x<BUF_WIDTH; x++) {
@@ -137,6 +153,7 @@ void paint_destination(png_structp png_ptr, png_bytep * row_pointers,
 	dest[index+i] = ptr[i];
     }
   }
+  pthread_mutex_unlock(&paint_destination_lock);
 }
 
 /***********************************************************************************/
@@ -216,6 +233,15 @@ struct headerdata {
   bool * received_fragments;
 };
 
+//
+// I (Ghanan) added the mutex because multiple threads can call this function
+// at the same time and there is a chance that they obtained the same fragments
+// so two threads may attmept to write to same location in memory (the
+// received_fragments array is shard between threads).:
+// >>>hd->received_fragments[hd->n] = true;
+//
+static pthread_mutex_t header_cb_lock;
+
 size_t header_cb (char * buf, size_t size, size_t nmemb, void * userdata)
 {
   struct headerdata * hd = userdata;
@@ -225,15 +251,28 @@ size_t header_cb (char * buf, size_t size, size_t nmemb, void * userdata)
     // one ought to check that buf is 0-terminated
     //  not guaranteed by spec (!)
     hd->n = atoi(buf+strlen(ECE459_HEADER));
+
+    pthread_mutex_lock(&header_cb_lock);
     hd->received_fragments[hd->n] = true;
+    pthread_mutex_unlock(&header_cb_lock);
+
     printf("received fragment %d\n", hd->n);
   }
+
   return bytes_in_header;
 }
 
 /***********************************************************************************/
 
-pthread_mutex_t get_url_lock;
+typedef struct _thread_function_context
+{
+  int thread_id;
+  bool * received_fragments;
+  int img;
+  png_byte * output_buffer;
+} thread_function_context;
+
+static pthread_mutex_t get_url_lock;
 
 //
 // Get url to get image from
@@ -266,9 +305,78 @@ void get_url (char ** url, int img)
 //
 // Funciton that each thread will run
 //
-void thread_function (void * context)
+void *thread_function (void * context)
 {
+  bool received_all_fragments;
+  thread_function_context * tf_context;
+  CURL *curl;
+  CURLcode res;
+  png_structp png_ptr;
+  png_infop info_ptr;
 
+  tf_context = (thread_function_context *) context;
+
+  printf("[%s] Thread #%d started...\n", __FUNCTION__, tf_context->thread_id);
+
+  curl = curl_easy_init();
+  if (!curl)
+    abort_("[%s] could not initialize curl", __FUNCTION__);
+
+  char * url = malloc(sizeof(char)*strlen(BASE_URL_1)+4*5);
+  png_bytep input_buffer = malloc(sizeof(png_byte)*BUF_SIZE);
+
+  struct bufdata bd;
+  bd.buf = input_buffer;
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &bd);
+
+  struct headerdata hd; hd.received_fragments = tf_context->received_fragments;
+  curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hd);
+  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
+
+  do {
+    // request appropriate URL
+    // Calling get_url each loop iterations allows it to change
+    // urls each time
+    get_url(&url, tf_context->img);
+    DEBUG_PRINT(("[%s] thread id #%d requesting URL %s\n", __FUNCTION__, tf_context->thread_id, url));
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+
+    png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    if (!png_ptr)
+      abort_("[%s] png_create_read_struct failed", __FUNCTION__);
+
+    // reset input buffer
+    bd.len = bd.pos = 0; bd.max_size = BUF_SIZE;
+
+    // do curl request; check for errors
+    res = curl_easy_perform(curl);
+    if(res != CURLE_OK)
+      abort_("[%s] curl_easy_perform() failed: %s\n",
+	     __FUNCTION__, curl_easy_strerror(res));
+
+    // read PNG (as downloaded from network) and copy it to output buffer
+    png_bytep* row_pointers = read_png_file(png_ptr, &info_ptr, &bd);
+    paint_destination(png_ptr, row_pointers, hd.n*BUF_WIDTH, 0, tf_context->output_buffer);
+
+    // free allocated memory
+    for (int y=0; y<BUF_HEIGHT; y++)
+      free(row_pointers[y]);
+    free(row_pointers);
+    png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+
+    // check for unreceived fragments
+    received_all_fragments = true;
+    for (int i = 0; i < N; i++)
+      if (!tf_context->received_fragments[i])
+	received_all_fragments = false;
+  } while (!received_all_fragments);
+  free(url);
+  free(input_buffer);
+
+  curl_easy_cleanup(curl);
+
+  pthread_exit(0);
 }
 
 /***********************************************************************************/
@@ -278,9 +386,11 @@ int main(int argc, char **argv)
   int c;
   int num_threads = 4;
   int img = 1;
-  bool received_all_fragments = false;
-  bool * received_fragments = calloc(N, sizeof(bool));
+  bool * received_fragments;
   pthread_t * threads;
+  thread_function_context * thread_function_contexts;
+  int i;
+  png_byte * output_buffer;
 
   while ((c = getopt (argc, argv, "t:")) != -1) {
     switch (c) {
@@ -303,74 +413,69 @@ int main(int argc, char **argv)
     }
   }
 
-  CURL *curl;
-  CURLcode res;
-  png_structp png_ptr;
-  png_infop info_ptr;
+  DEBUG_PRINT(("[%s] Number of threads: %d\n", __FUNCTION__, num_threads));
+  DEBUG_PRINT(("[%s] Img #: %d\n", __FUNCTION__, img));
 
-  if (pthread_mutex_init(&get_url_lock, NULL) != 0)
+  received_fragments = calloc(N, sizeof(bool));
+  if (!received_fragments)
   {
-    abort_("[main] pthread mutex init failed");
+    abort_("[%s] received_fragments calloc failed", __FUNCTION__);
+  }
+
+  output_buffer = calloc(WIDTH*HEIGHT*4, sizeof(png_byte));
+  if (!output_buffer)
+  {
+    abort_("[%s] output_buffer calloc failed", __FUNCTION__);
+  }
+
+  if (pthread_mutex_init(&get_url_lock, NULL))
+  {
+    abort_("[%s] get_url_lock pthread_mutex_init failed", __FUNCTION__);
+  }
+
+  if (pthread_mutex_init(&header_cb_lock, NULL))
+  {
+    abort_("[%s] header_cb_lock pthread_mutex_init failed", __FUNCTION__);
+  }
+
+  if (pthread_mutex_init(&paint_destination_lock, NULL))
+  {
+    abort_("[%s] paint_destination_lock pthread_mutex_init failed", __FUNCTION__);
   }
 
   threads = (pthread_t *) calloc(num_threads, sizeof(pthread_t));
-  png_byte * output_buffer = calloc(WIDTH*HEIGHT*4, sizeof(png_byte));
+  if (!threads)
+  {
+    abort_("[%s] thread calloc failed", __FUNCTION__);
+  }
 
-  curl = curl_easy_init();
-  if (!curl)
-    abort_("[main] could not initialize curl");
+  thread_function_contexts = (thread_function_context *) calloc(num_threads, sizeof(thread_function_context));
+  if (!thread_function_contexts)
+  {
+    abort_("%s] thread_function_contexts calloc failed");
+  }
 
-  char * url = malloc(sizeof(char)*strlen(BASE_URL_1)+4*5);
-  png_bytep input_buffer = malloc(sizeof(png_byte)*BUF_SIZE);
+  printf("[%s] Dispatching threads...\n", __FUNCTION__);
+  for (i = 0; i < num_threads; ++i)
+  {
+    thread_function_contexts[i].thread_id = i;
+    thread_function_contexts[i].received_fragments = received_fragments;
+    thread_function_contexts[i].img = img;
+    thread_function_contexts[i].output_buffer = output_buffer;
 
-  struct bufdata bd;
-  bd.buf = input_buffer;
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &bd);
+    if (pthread_create(&threads[i], NULL, thread_function, (void *) &thread_function_contexts[i]))
+    {
+      abort_("%s] failed to create thread %d\n", __FUNCTION__, i);
+    }
+  }
 
-  struct headerdata hd; hd.received_fragments = received_fragments;
-  curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hd);
-  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
+  printf("[%s] Waiting for threads to finish...\n", __FUNCTION__);
+  for (i = 0; i != num_threads; ++i)
+  {
+    pthread_join(threads[i], NULL);
+  }
 
-  // request appropriate URL
-  get_url(&url, img);
-  printf("requesting URL %s\n", url);
-  curl_easy_setopt(curl, CURLOPT_URL, url);
-
-  do {
-    png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-    if (!png_ptr)
-      abort_("[main] png_create_read_struct failed");
-
-    // reset input buffer
-    bd.len = bd.pos = 0; bd.max_size = BUF_SIZE;
-
-    // do curl request; check for errors
-    res = curl_easy_perform(curl);
-    if(res != CURLE_OK)
-      abort_("[main] curl_easy_perform() failed: %s\n",
-	      curl_easy_strerror(res));
-
-    // read PNG (as downloaded from network) and copy it to output buffer
-    png_bytep* row_pointers = read_png_file(png_ptr, &info_ptr, &bd);
-    paint_destination(png_ptr, row_pointers, hd.n*BUF_WIDTH, 0, output_buffer);
-
-    // free allocated memory
-    for (int y=0; y<BUF_HEIGHT; y++)
-      free(row_pointers[y]);
-    free(row_pointers);
-    png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
-
-    // check for unreceived fragments
-    received_all_fragments = true;
-    for (int i = 0; i < N; i++)
-      if (!received_fragments[i])
-	received_all_fragments = false;
-  } while (!received_all_fragments);
-  free(url);
-  free(input_buffer);
-
-  curl_easy_cleanup(curl);
+  // call each thread
 
   // now, write the array back to disk using write_png_file
   png_bytep * output_row_pointers = (png_bytep*) malloc(sizeof(png_bytep) * HEIGHT);
@@ -382,6 +487,8 @@ int main(int argc, char **argv)
   free(output_row_pointers);
   free(output_buffer);
   free(received_fragments);
+  free(threads);
+  free(thread_function_contexts);
 
   return 0;
 }
