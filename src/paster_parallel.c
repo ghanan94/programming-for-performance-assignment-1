@@ -455,6 +455,8 @@ int main(int argc, char **argv)
     abort_("%s] thread_function_contexts calloc failed");
   }
 
+  curl_global_init(CURL_GLOBAL_ALL);
+
   printf("[%s] Dispatching threads...\n", __FUNCTION__);
   for (i = 0; i < num_threads; ++i)
   {
@@ -489,6 +491,7 @@ int main(int argc, char **argv)
   free(received_fragments);
   free(threads);
   free(thread_function_contexts);
+  curl_global_cleanup();
 
   return 0;
 }
