@@ -27,6 +27,7 @@
 #define PNG_DEBUG 3
 #include <png.h>
 #include <curl/curl.h>
+#include <curl/multi.h>
 
 struct bufdata {
   png_bytep buf;
@@ -38,11 +39,20 @@ struct bufdata {
 #define WIDTH 4000
 #define HEIGHT 3000
 
-#define BASE_URL "http://berkeley.uwaterloo.ca:4590/image?img=%d"
+#define BASE_URL_1 "http://berkeley.uwaterloo.ca:4590/image?img=%d"
+#define BASE_URL_2 "http://patricklam.ca:4590/image?img=%d"
+#define BASE_URL_3 "http://ece459-1.uwaterloo.ca:4590/image?img=%d"
+
 #define BUF_WIDTH WIDTH/N
 #define BUF_HEIGHT HEIGHT
 #define BUF_SIZE 10485760
 #define ECE459_HEADER "X-Ece459-Fragment: "
+
+#ifdef DEBUG
+#define DEBUG_PRINT(x) (printf x)
+#else
+#define DEBUG_PRINT(x) /* DEBUG is not defined/enabled */
+#endif
 
 /* error handling macro */
 void abort_(const char * s, ...)
@@ -227,6 +237,106 @@ size_t header_cb (char * buf, size_t size, size_t nmemb, void * userdata)
 }
 
 /***********************************************************************************/
+//
+// Get url to get image from
+//
+void get_url (char ** url, int img)
+{
+  static unsigned int counter;
+
+  switch (counter)
+  {
+  case 0:
+    sprintf(*url, BASE_URL_1, img);
+    break;
+  case 1:
+    sprintf(*url, BASE_URL_2, img);
+    break;
+  case 2:
+  default:
+    sprintf(*url, BASE_URL_3, img);
+    break;
+  }
+
+  counter = (counter + 1) % 3;
+}
+
+typedef struct _curl_context
+{
+  int curl_id;
+  CURL * curl;
+  bool * received_fragments;
+  struct bufdata bd;
+  struct headerdata hd;
+  png_bytep input_buffer;
+  char * url;
+  int img;
+} curl_context, * pcurl_context;
+
+pcurl_context get_curl_context (pcurl_context contexts, int num_contexts, CURL * curl)
+{
+  int i;
+
+  for (i = 0; i < num_contexts; ++i)
+  {
+    if (contexts[i].curl == curl)
+    {
+      return &contexts[i];
+    }
+  }
+
+  return 0;
+}
+
+void init_curl (CURLM * curlm, pcurl_context context)
+{
+  context->curl = curl_easy_init();
+  if (!context->curl)
+  {
+    abort_("[%s] could not init curl", __FUNCTION__);
+  }
+
+  // request appropriate URL
+  get_url(&context->url, context->img);
+  DEBUG_PRINT(("[%s] Curl #%d requesting URL %s\n", __FUNCTION__, context->curl_id, context->url));
+  curl_easy_setopt(context->curl, CURLOPT_URL, context->url);
+
+  context->bd.len = 0;
+  context->bd.pos = 0;
+  context->bd.max_size = BUF_SIZE;
+  curl_easy_setopt(context->curl, CURLOPT_WRITEFUNCTION, write_cb);
+  curl_easy_setopt(context->curl, CURLOPT_WRITEDATA, &context->bd);
+
+  curl_easy_setopt(context->curl, CURLOPT_HEADERDATA, &context->hd);
+  curl_easy_setopt(context->curl, CURLOPT_HEADERFUNCTION, header_cb);
+
+  curl_multi_add_handle(curlm, context->curl);
+}
+
+void init_curl_for_multi_curl (CURLM * curlm, pcurl_context context, int curl_id, bool * received_fragments, int img)
+{
+  context->curl_id = curl_id;
+  context->img = img;
+
+  context->input_buffer = (png_bytep) malloc(sizeof(png_byte)*BUF_SIZE);
+  if (!context->input_buffer)
+  {
+    abort_("[%s] input_buffer malloc failed\n", __FUNCTION__);
+  }
+
+  context->url = (char *) malloc(sizeof(char)*strlen(BASE_URL_1)+4*5);
+  if (!context->url)
+  {
+    abort_("[%s] could not malloc url", __FUNCTION__);
+  }
+
+  context->bd.buf = context->input_buffer;
+  context->hd.received_fragments = received_fragments;
+
+  init_curl(curlm, context);
+}
+
+/***********************************************************************************/
 
 int main(int argc, char **argv)
 {
@@ -235,6 +345,14 @@ int main(int argc, char **argv)
   int img = 1;
   bool received_all_fragments = false;
   bool * received_fragments = calloc(N, sizeof(bool));
+  pcurl_context contexts;
+  int i;
+  CURLM * curlm;
+  int U;
+  CURLMsg * msg;
+  int Q;
+  CURL * curl;
+  pcurl_context curr_context;
 
   while ((c = getopt (argc, argv, "t:i:")) != -1) {
     switch (c) {
@@ -257,68 +375,100 @@ int main(int argc, char **argv)
     }
   }
 
-  CURL *curl;
-  CURLcode res;
+  contexts = (pcurl_context) calloc(num_threads, sizeof(curl_context));
+  if (!contexts)
+  {
+    abort_("[%s] contexts malloc failed", __FUNCTION__);
+  }
+
+  curl_global_init(CURL_GLOBAL_ALL);
+
+  curlm = curl_multi_init();
+  if (!curlm)
+  {
+    abort_("[%s] curlm init failed\n", __FUNCTION__);
+  }
+
+  // Set max connections
+  // curl_multi_setopt(curlm, CURLMOPT_MAXCONNECTS, (long) num_threads);
+
+  for (i = 0; i < num_threads; ++i)
+  {
+    init_curl_for_multi_curl(curlm, &contexts[i], i, received_fragments, img);
+  }
+
   png_structp png_ptr;
   png_infop info_ptr;
 
   png_byte * output_buffer = calloc(WIDTH*HEIGHT*4, sizeof(png_byte));
 
-  curl = curl_easy_init();
-  if (!curl)
-    abort_("[main] could not initialize curl");
+  U = -1;
 
-  char * url = malloc(sizeof(char)*strlen(BASE_URL)+4*5);
-  png_bytep input_buffer = malloc(sizeof(png_byte)*BUF_SIZE);
+  while (U) {
+    // run all curls
+    curl_multi_perform(curlm, &U);
 
-  struct bufdata bd;
-  bd.buf = input_buffer;
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &bd);
+    if (U) {
+      // TODO
+    }
 
-  struct headerdata hd; hd.received_fragments = received_fragments;
-  curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hd);
-  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
+    while ((msg = curl_multi_info_read(curlm, &Q)))
+    {
+      // Check to make sure the CURL-ing is done
+      if (msg->msg == CURLMSG_DONE) {
+	curl = msg->easy_handle;
+	curr_context = get_curl_context(contexts, num_threads, curl);
+	curl_easy_getinfo(msg->easy_handle, CURLINFO_PRIVATE, curr_context->url);
+	curl_multi_remove_handle(curlm, curl);
+	curl_easy_cleanup(curl);
+      }
+      else
+      {
+	fprintf(stderr, "E: CURLMsg (%d)\n", msg->msg);
+	abort_("[%s] curl msg not done\n", __FUNCTION__);
+      }
 
-  // request appropriate URL
-  sprintf(url, BASE_URL, img);
-  printf("requesting URL %s\n", url);
-  curl_easy_setopt(curl, CURLOPT_URL, url);
+      png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+      if (!png_ptr)
+	abort_("[main] png_create_read_struct failed");
 
-  do {
-    png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-    if (!png_ptr)
-      abort_("[main] png_create_read_struct failed");
+      // read PNG (as downloaded from network) and copy it to output buffer
+      png_bytep* row_pointers = read_png_file(png_ptr, &info_ptr, &curr_context->bd);
+      paint_destination(png_ptr, row_pointers, curr_context->hd.n*BUF_WIDTH, 0, output_buffer);
 
-    // reset input buffer
-    bd.len = bd.pos = 0; bd.max_size = BUF_SIZE;
+      // free allocated memory
+      for (int y=0; y<BUF_HEIGHT; y++)
+	free(row_pointers[y]);
+      free(row_pointers);
+      png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
 
-    // do curl request; check for errors
-    res = curl_easy_perform(curl);
-    if(res != CURLE_OK)
-      abort_("[main] curl_easy_perform() failed: %s\n",
-	      curl_easy_strerror(res));
+      // check for unreceived fragments
+      received_all_fragments = true;
+      for (int i = 0; i < N; i++)
+	if (!received_fragments[i])
+	  received_all_fragments = false;
 
-    // read PNG (as downloaded from network) and copy it to output buffer
-    png_bytep* row_pointers = read_png_file(png_ptr, &info_ptr, &bd);
-    paint_destination(png_ptr, row_pointers, hd.n*BUF_WIDTH, 0, output_buffer);
+      if (!received_all_fragments)
+      {
+	// init a new curl
+	init_curl(curlm, curr_context);
 
-    // free allocated memory
-    for (int y=0; y<BUF_HEIGHT; y++)
-      free(row_pointers[y]);
-    free(row_pointers);
-    png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+	// Call this to start the newly added curl request
+	curl_multi_perform(curlm, &U);
+      }
+    }
+  }
 
-    // check for unreceived fragments
-    received_all_fragments = true;
-    for (int i = 0; i < N; i++)
-      if (!received_fragments[i])
-	received_all_fragments = false;
-  } while (!received_all_fragments);
-  free(url);
-  free(input_buffer);
+  curl_multi_cleanup(curlm);
+  curl_global_cleanup();
 
-  curl_easy_cleanup(curl);
+  for (i = 0; i < num_threads; ++i)
+  {
+    // Clear all pointers created for each context
+    free(contexts[i].input_buffer);
+    free(contexts[i].url);
+  }
+  free(contexts);
 
   // now, write the array back to disk using write_png_file
   png_bytep * output_row_pointers = (png_bytep*) malloc(sizeof(png_bytep) * HEIGHT);
