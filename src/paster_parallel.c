@@ -392,7 +392,7 @@ int main(int argc, char **argv)
   int i;
   png_byte * output_buffer;
 
-  while ((c = getopt (argc, argv, "t:")) != -1) {
+  while ((c = getopt (argc, argv, "t:i:")) != -1) {
     switch (c) {
     case 't':
       num_threads = strtoul(optarg, NULL, 10);
