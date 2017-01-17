@@ -471,13 +471,13 @@ int main(int argc, char **argv)
     }
   }
 
-  printf("[%s] Waiting for threads to finish...\n", __FUNCTION__);
+  DEBUG_PRINT(("[%s] Waiting for threads to finish...\n", __FUNCTION__));
   for (i = 0; i != num_threads; ++i)
   {
+    DEBUG_PRINT(("[%s] Waiting for thread #%d to finish\n", __FUNCTION__, i));
     pthread_join(threads[i], NULL);
+    DEBUG_PRINT(("[%s] thread #%d finished\n", __FUNCTION__, i));
   }
-
-  // call each thread
 
   // now, write the array back to disk using write_png_file
   png_bytep * output_row_pointers = (png_bytep*) malloc(sizeof(png_bytep) * HEIGHT);
