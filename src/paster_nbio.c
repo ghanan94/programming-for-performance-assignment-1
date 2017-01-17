@@ -348,11 +348,11 @@ int main(int argc, char **argv)
   pcurl_context contexts;
   int i;
   CURLM * curlm;
-  int U;
+  int running_curls;
   CURLMsg * msg;
-  int Q;
-  CURL * curl;
+  int msgs_in_queue;
   pcurl_context curr_context;
+  CURLMcode mc;
 
   while ((c = getopt (argc, argv, "t:i:")) != -1) {
     switch (c) {
@@ -402,25 +402,29 @@ int main(int argc, char **argv)
 
   png_byte * output_buffer = calloc(WIDTH*HEIGHT*4, sizeof(png_byte));
 
-  U = -1;
+  mc = curl_multi_perform(curlm, &running_curls);
+  if (mc != CURLM_OK)
+  {
+    abort_("[%s:%s] curl_multi_perform failed\n", __FUNCTION__, __LINE__);
+  }
 
-  while (U) {
-    // run all curls
-    curl_multi_perform(curlm, &U);
-
-    if (U) {
-      // TODO
-    }
-
-    while ((msg = curl_multi_info_read(curlm, &Q)))
+  do {
+    while ((msg = curl_multi_info_read(curlm, &msgs_in_queue)))
     {
       // Check to make sure the CURL-ing is done
       if (msg->msg == CURLMSG_DONE) {
-	curl = msg->easy_handle;
-	curr_context = get_curl_context(contexts, num_threads, curl);
-	curl_easy_getinfo(msg->easy_handle, CURLINFO_PRIVATE, curr_context->url);
-	curl_multi_remove_handle(curlm, curl);
-	curl_easy_cleanup(curl);
+	curr_context = get_curl_context(contexts, num_threads, msg->easy_handle);
+	DEBUG_PRINT(("[%s] R: %d - %s <%s>\n", __FUNCTION__,
+		     msg->data.result, curl_easy_strerror(msg->data.result), curr_context->url));
+
+	if (msg->data.result != CURLE_OK)
+	{
+	  abort_("[%s] msg data result is not CURLE_OK\n", __FUNCTION__);
+	}
+
+	curl_multi_remove_handle(curlm, curr_context->curl);
+	curl_easy_cleanup(curr_context->curl);
+	curr_context->curl = NULL;
       }
       else
       {
@@ -453,22 +457,40 @@ int main(int argc, char **argv)
 	// init a new curl
 	init_curl(curlm, curr_context);
 
-	// Call this to start the newly added curl request
-	curl_multi_perform(curlm, &U);
+	// Run the new curl
+	mc = curl_multi_perform(curlm, &running_curls);
+	if (mc != CURLM_OK)
+	{
+	  abort_("[%s:%s] curl_multi_perform failed\n", __FUNCTION__, __LINE__);
+	}
       }
     }
-  }
 
-  curl_multi_cleanup(curlm);
-  curl_global_cleanup();
+    // Run any new curls or continue running currently running curl
+    // Get number of remaining running_curls
+    mc = curl_multi_perform(curlm, &running_curls);
+    if (mc != CURLM_OK)
+    {
+      abort_("[%s:%s] curl_multi_perform failed\n", __FUNCTION__, __LINE__);
+    }
+  } while (!received_all_fragments);
 
   for (i = 0; i < num_threads; ++i)
   {
     // Clear all pointers created for each context
+    if (contexts[i].curl)
+    {
+      curl_multi_remove_handle(curlm, contexts[i].curl);
+      curl_easy_cleanup(contexts[i].curl);
+      contexts[i].curl = NULL;
+    }
     free(contexts[i].input_buffer);
     free(contexts[i].url);
   }
   free(contexts);
+
+  curl_multi_cleanup(curlm);
+  curl_global_cleanup();
 
   // now, write the array back to disk using write_png_file
   png_bytep * output_row_pointers = (png_bytep*) malloc(sizeof(png_bytep) * HEIGHT);
