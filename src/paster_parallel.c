@@ -130,20 +130,11 @@ void read_cb (png_structp png_ptr, png_bytep outBytes, png_size_t byteCountToRea
 
 /* copy from row_pointers data array to dest data array, at offset (x0, y0) */
 
-//
-// dest is a shared memory space between threads. This function can be called my
-// multiple threads at the same time so we need to make sure that when
-// writing to threads we dont have different threads writing different fragments
-// at the same time
-//
-static pthread_mutex_t paint_destination_lock;
-
 void paint_destination(png_structp png_ptr, png_bytep * row_pointers,
 		       int x0, int y0, png_byte* dest)
 {
   int x, y, i;
 
-  pthread_mutex_lock(&paint_destination_lock);
   for (y=0; y<BUF_HEIGHT && (y0+y) < HEIGHT; y++) {
     png_byte* row = row_pointers[y];
     for (x=0; x<BUF_WIDTH; x++) {
@@ -153,7 +144,6 @@ void paint_destination(png_structp png_ptr, png_bytep * row_pointers,
 	dest[index+i] = ptr[i];
     }
   }
-  pthread_mutex_unlock(&paint_destination_lock);
 }
 
 /***********************************************************************************/
@@ -233,15 +223,6 @@ struct headerdata {
   bool * received_fragments;
 };
 
-//
-// I (Ghanan) added the mutex because multiple threads can call this function
-// at the same time and there is a chance that they obtained the same fragments
-// so two threads may attmept to write to same location in memory (the
-// received_fragments array is shard between threads).:
-// >>>hd->received_fragments[hd->n] = true;
-//
-static pthread_mutex_t header_cb_lock;
-
 size_t header_cb (char * buf, size_t size, size_t nmemb, void * userdata)
 {
   struct headerdata * hd = userdata;
@@ -252,9 +233,7 @@ size_t header_cb (char * buf, size_t size, size_t nmemb, void * userdata)
     //  not guaranteed by spec (!)
     hd->n = atoi(buf+strlen(ECE459_HEADER));
 
-    pthread_mutex_lock(&header_cb_lock);
     hd->received_fragments[hd->n] = true;
-    pthread_mutex_unlock(&header_cb_lock);
 
     printf("received fragment %d\n", hd->n);
   }
@@ -282,6 +261,8 @@ void get_url (char ** url, int img)
   static unsigned int counter;
 
   pthread_mutex_lock(&get_url_lock);
+  counter = (counter + 1) % 3;
+  pthread_mutex_unlock(&get_url_lock);
 
   switch (counter)
   {
@@ -296,10 +277,6 @@ void get_url (char ** url, int img)
     sprintf(*url, BASE_URL_3, img);
     break;
   }
-
-  counter = (counter + 1) % 3;
-
-  pthread_mutex_unlock(&get_url_lock);
 }
 
 //
@@ -431,16 +408,6 @@ int main(int argc, char **argv)
   if (pthread_mutex_init(&get_url_lock, NULL))
   {
     abort_("[%s] get_url_lock pthread_mutex_init failed", __FUNCTION__);
-  }
-
-  if (pthread_mutex_init(&header_cb_lock, NULL))
-  {
-    abort_("[%s] header_cb_lock pthread_mutex_init failed", __FUNCTION__);
-  }
-
-  if (pthread_mutex_init(&paint_destination_lock, NULL))
-  {
-    abort_("[%s] paint_destination_lock pthread_mutex_init failed", __FUNCTION__);
   }
 
   threads = (pthread_t *) calloc(num_threads, sizeof(pthread_t));
