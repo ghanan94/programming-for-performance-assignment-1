@@ -6,14 +6,14 @@
 
 % Fill in these values to make your life easier
 \newcommand{\iterations}{???}
-\newcommand{\physicalcores}{?}
-\newcommand{\virtualcpus}{?}
+\newcommand{\physicalcores}{4}
+\newcommand{\virtualcpus}{8}
 
 \pagestyle{empty}
 
 \title{ECE 459: Programming for Performance\\Assignment 1}
-\author{Your Name}
-\date{February 2, 2014}
+\author{Ghanan Gowripalan}
+\date{\today}
 
 \begin{document}
 
@@ -25,11 +25,11 @@ The resource leak was caused by the fact that the {\tt png\_struct} struct that 
 
 \section*{Part 1: Pthreads}
 
-My code is thread-safe because the daemons said so: \url{http://goo.gl/RLO6bh}.
+My code is thread-safe because any function that is being called on by each of the spawned threads that modifies shared data (each thread can write different data) are protected by mutex locks. Other functions that are called on by threads that are not protected by mutex locks but also write to a shared space in memory will not cause race conditions because whenever there is a WAW, they write the exact same data.
 
-There are no race conditions because races are bad.
+There are no race conditions because each of the threads only do writes(WAW). If there are any overlapping writes, the will write the exact same data because if they are writing to the same location in the buffer, then the fragments are the same. If the fragments are the exact same, then they will have the same data. The one exception to this is the {\tt get\_url} function which is protected by a mutex lock.
 
-I ran experiments on a ??? CPU. It has \physicalcores{} physical cores and \virtualcpus{} virtual
+I ran experiments on a Intel(R) Core(TM) i7-2600K CPU @ 3.40GHz CPU. It has \physicalcores{} physical cores and \virtualcpus{} virtual
 CPUs. Tables~\ref{tbl_sequential}~and~\ref{tbl_parallel} present my results.
 
 \begin{table}[H]
@@ -37,13 +37,13 @@ CPUs. Tables~\ref{tbl_sequential}~and~\ref{tbl_parallel} present my results.
   \begin{tabular}{lr}
     & {\bf Time (s)} \\
     \hline
-    Run 1 & 0 \\
-    Run 2 & 0 \\
-    Run 3 & 0 \\
+    Run 1 & 34.515 \\
+    Run 2 & 61.680 \\
+    Run 3 & 49.144 \\
     \hline
-    Average & 0 \\
+    Average & 48.446 \\
   \end{tabular}
-  \caption{\label{tbl_sequential}Sequential executions terminate in a mean of 3.14 seconds.}
+  \caption{\label{tbl_sequential}Sequential executions terminate in a mean of 48.446 seconds.}
 \end{table}
 
 \begin{table}[H]
@@ -51,13 +51,13 @@ CPUs. Tables~\ref{tbl_sequential}~and~\ref{tbl_parallel} present my results.
   \begin{tabular}{lrr}
     & {\bf N=4, Time (s)} & {\bf N=64, Time (s)} \\
     \hline
-    Run 1 & 0 \\
-    Run 2 & 0 \\
-    Run 3 & 0 \\
+    Run 1 & 24.106 & 34.670 \\
+    Run 2 & 22.890 & 34.895 \\
+    Run 3 & 27.354 & 45.169 \\
     \hline
-    Average & 0 \\
+    Average & 24.783 & 38.245 \\
   \end{tabular}
-  \caption{\label{tbl_parallel}Parallel executions terminate in a mean of 2.718 seconds.}
+  \caption{\label{tbl_parallel}Parallel executions terminate in a mean of 24.783 seconds when using 4 threads, and 38.245 seconds when using 64 threads.}
 \end{table}
 
 \section*{Part 2: Nonblocking I/O}
@@ -86,7 +86,7 @@ simultaneously.
 not sure why.
 
 \section*{Part 3: Amdahl's Law and Gustafson's Law}
-I did XXX to measure the sequential portion of {\tt paster\_parallel}. Over 3 runs,
+oI did XXX to measure the sequential portion of {\tt paster\_parallel}. Over 3 runs,
 it took an average of M seconds. Amdahl's Law\ldots
 
 \end{document}
