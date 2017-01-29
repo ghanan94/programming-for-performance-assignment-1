@@ -62,7 +62,7 @@ CPUs. Tables~\ref{tbl_sequential}~and~\ref{tbl_parallel} present my results.
 
 \section*{Part 2: Nonblocking I/O}
 
-Table~\ref{tbl_nbio} presents results from my non-blocking I/O implementation. I started $N$ requests
+Table~\ref{tbl_nbio} presents results from my non-blocking I/O implementation. I started $4$ requests
 simultaneously.
 
 \begin{table}[H]
@@ -70,20 +70,29 @@ simultaneously.
   \begin{tabular}{lr}
     & {\bf Time (s)} \\
     \hline
-    Run 1 & 0 \\
-    Run 2 & 0 \\
-    Run 3 & 0 \\
-    Run 4 & 0 \\
-    Run 5 & 0 \\
-    Run 6 & 0 \\
+    Run 1 & 25.174 \\
+    Run 2 & 24.259 \\
+    Run 3 & 15.575 \\
+    Run 4 & 30.982 \\
+    Run 5 & 27.604 \\
+    Run 6 & 17.349 \\
     \hline
-    Average & 0 \\
+    Average & 23.491 \\
   \end{tabular}
-  \caption{\label{tbl_nbio}Non-blocking I/O executions terminate in a mean of $i$ seconds.}
+  \caption{\label{tbl_nbio}Non-blocking I/O executions terminate in a mean of $23.491$ seconds.}
 \end{table}
 
-\paragraph{Discussion.} Surprisingly, the sequential execution ran fastest. I'm
-not sure why.
+\paragraph{Discussion.} As expected, the sequential execution performed much worse when compared to the parallel and non-blocking IO version. The sequential version executed with a mean run time of 48.446s. The parallel and non-blocking IO implementations seemed to perform similarly. The parallel and non-blocking IO implementations' mean runtimes were 24.783s and 23.491s, respectively for 4 threads/concurrent connections.
+
+It seems like even though I didn't expliclty create multiple threads for the non-blocking IO implemenations, the CURLM (multi) api created a thread for each CURL request. This became evident when using valgrind with the non-blocking IO implemention, it seemed like the CURLM (multi) api spawned multiple threads (one for each of the curls) - valgrind reported threads being spawned. This implies that in both parallelized versions, threads were created (expliclty or not).
+
+This helps make it more clear as to why both the parallel and non-blocking IO implementations performed similarly:
+\begin{itemize}
+\item In both implementations (when {\tt num\_threads} was set to 4), 4 threads were spawned.
+\item Each thread handled one curl request at a time.
+\end{itemize}
+
+In the parallel implemenation, the writing of the downloaded fragment to the output buffer is done in each thread, and in the non-blocking IO implemenation, they are done serially (after each curl completes). These operations are $much$ faster thant the curl operations. Also just because writing to the output buffe is done in each thread independantly, doesn't mean they execute at the same time. They may also seem to be occuring somewhat serially if the curl happens to finish after eachother instead of all at the same time. Hence, the runtime difference between the two implemenations regarding writing of the retreived fragment data to the output buffer can be considered negligible compared the CURL request times.
 
 \section*{Part 3: Amdahl's Law and Gustafson's Law}
 oI did XXX to measure the sequential portion of {\tt paster\_parallel}. Over 3 runs,
