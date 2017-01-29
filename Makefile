@@ -1,4 +1,5 @@
-CFLAGS?=-std=c99 -D_GNU_SOURCE -Wall -O2 -g
+# Define the DEBUG Macro so that we get debug prints
+CFLAGS?=-std=c99 -D_GNU_SOURCE -DDEBUG -Wall -O2 -g
 
 default: all
 
