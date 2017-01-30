@@ -3,6 +3,7 @@
 \usepackage[letterpaper, hmargin=0.75in, vmargin=0.75in]{geometry}
 \usepackage{float}
 \usepackage{url}
+\usepackage{mathtools}
 
 % Fill in these values to make your life easier
 \newcommand{\iterations}{???}
@@ -95,7 +96,52 @@ This helps make it more clear as to why both the parallel and non-blocking IO im
 In the parallel implemenation, the writing of the downloaded fragment to the output buffer is done in each thread, and in the non-blocking IO implemenation, they are done serially (after each curl completes). These operations are $much$ faster thant the curl operations. Also just because writing to the output buffe is done in each thread independantly, doesn't mean they execute at the same time. They may also seem to be occuring somewhat serially if the curl happens to finish after eachother instead of all at the same time. Hence, the runtime difference between the two implemenations regarding writing of the retreived fragment data to the output buffer can be considered negligible compared the CURL request times.
 
 \section*{Part 3: Amdahl's Law and Gustafson's Law}
-oI did XXX to measure the sequential portion of {\tt paster\_parallel}. Over 3 runs,
-it took an average of M seconds. Amdahl's Law\ldots
+
+Let T(n) be the execution time with n threads:
+\[ T(1) = 48.446s \]
+\[ T(4) = 24.783s \]
+\[ T(8) = 22.483s \]
+
+Using Amdahl's Law, we know that
+\[ T_p = T_s * (S + P/N) \]
+where $T_p$ is the time for the program to run in parallel, $T_s$ is the time to run the program serially, $S$ is the fraction of the program that must be executed serially, $P$ is the fraction of the program that can be executed in parallel, and $N$ is the number of processors/parallel executions.
+
+With this we can calculate the time that is spent in the serial portion.
+\[ T(4) = T(1) * (S + P/4) \]
+\[ S + P = 1 \]
+\[ S = 1 - P \]
+\[ T(4)	= T(1) * (1 - P + P/4) \]
+\[ T(4) = T(1) * (1 - 3 * P/4) \]
+\[ 24.783s = 48.446s * (1 - 3 * P/4) \]
+\[ 24.783s/48.446s = 1 - 3 * P/4 \]
+\[ 1 - 24.783s/48.446s = 3 * P/4 \]
+\[ (4/3) * (1 - 24.783s/48.446s) = P \]
+\[ 0.651 = P \]
+\[ S = 1 - P \]
+\[ S = 1 - 0.651 \]
+\[ S = 0.349 \]
+
+To confirm, do the same with T(8).
+\[ T(8) = T(1) * (S + P/8) \]
+\[ S + P = 1 \]
+\[ S = 1 - P \]
+\[ T(8) = T(1) * (1 - P + P/8) \]
+\[ T(8) = T(1) * (1 - 7 * P/8) \]
+\[ T(8)/T(1) = 1 - 7 * P/8 \]
+\[ 1 - (T(8)/T(1)) = 7 * P/8 \]
+\[ (8/7) * (1 - (T(8)/T(1))) = P \]
+\[ (8/7) * (1 - (22.483s/48.446s)) = P \]
+\[ 0.612 = P \]
+\[ S = 1 - P \]
+\[ S = 0.378 \]
+
+We can see that the S and P values are close. With this we know the time spent executing the serial portion of the program is:
+\[ T = T_s * S_{average} \]
+\[ T = 48.446s * (0.378 + 0.349) / 2 \]
+\[ T = 17.610 \]
+
+Therefore, it is estimated that approximately 17.610s is spent executing the serial part.
+
+Amdahl's Law applies because it provides a clear equation for calculating serial and parallel times given the percentage of time spent in the serial and parallel portions, along with the number of parallel executions. Alternatively, we can also use Amdahl's Law to go backwards (calculate the percentage of time spent in the serial and parallel part when given the serial and parallel execution time with some number of parallel executions - which is what we did here).
 
 \end{document}
